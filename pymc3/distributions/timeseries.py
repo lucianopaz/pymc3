@@ -5,6 +5,15 @@ from pymc3.util import get_variable_name
 from .continuous import get_tau_sigma, Normal, Flat
 from . import multivariate
 from . import distribution
+from .distribution import (
+    _DrawValuesContext,
+    draw_values,
+    to_tuple,
+    generate_samples,
+    broadcast_distribution_samples,
+)
+import numpy as np
+from scipy import stats
 
 
 __all__ = [
@@ -48,6 +57,59 @@ class AR1(distribution.Continuous):
         innov_like = Normal.dist(k * x_im1, tau=tau_e).logp(x_i)
         return boundary(x[0]) + tt.sum(innov_like)
 
+    def _random(self, k, tau_e, sample_size=None, size=None):
+        if isinstance(sample_size, np.ndarray):
+            sample_size = sample_size.ravel()[0]
+        if size is not None:
+            self_shape = to_tuple(size)
+        else:
+            self_shape = to_tuple(self.shape)
+        _, k, tau_e = broadcast_distribution_samples((np.empty(self_shape),
+                                                      k,
+                                                      tau_e),
+                                                     size=sample_size)
+        size = k.shape
+        samples = stats.norm.rvs(loc=0, scale=1./np.sqrt(tau_e),
+                                 size=size)
+        for t_ind in range(1, samples.shape[-1]):
+            samples[..., t_ind] += k[..., t_ind - 1] * samples[..., t_ind - 1]
+        return samples
+
+    def random(self, point=None, size=None):
+        """
+        Draw random values from AR1 distribution.
+
+        Parameters
+        ----------
+        point : dict, optional
+            Dict of variable values on which random values are to be
+            conditioned (uses default point if not specified).
+        size : int, optional
+            Desired size of random sample (returns one sample if not
+            specified).
+
+        Returns
+        -------
+        array
+        """
+        k, tau_e = broadcast_distribution_samples(draw_values([self.k,
+                                                               self.tau_e],
+                                                              point=point,
+                                                              size=size),
+                                                  size=size)
+        if size is not None:
+            self_shape = to_tuple(size) + to_tuple(self.shape)
+        else:
+            self_shape = self.shape
+        broadcast_shape = broadcast_distribution_samples((np.empty(self_shape),
+                                                          k),
+                                                         size=size)[0].shape
+        return generate_samples(self._random, k=k, tau_e=tau_e,
+                                sample_size=size,
+                                dist_shape=self.shape,
+                                broadcast_shape=broadcast_shape,
+                                size=size)
+
     def _repr_latex_(self, name=None, dist=None):
         if dist is None:
             dist = self
@@ -78,7 +140,10 @@ class AR(distribution.Continuous):
     Parameters
     ----------
     rho : tensor
-        Tensor of autoregressive coefficients. The first dimension is the p lag.
+        Tensor of autoregressive coefficients. The first dimension is the p
+        lag. If constant is `True`, then
+        `rho = [\rho_0, \rho_1, \ldots, \rho_p]`.
+        If constant is `False`, then `rho = [\rho_1, \ldots, \rho_p]`
     sigma : float
         Standard deviation of innovation (sigma > 0). (only required if tau is not specified)
     tau : float
@@ -86,7 +151,9 @@ class AR(distribution.Continuous):
     constant: bool (optional, default = False)
         Whether to include a constant.
     init : distribution
-        distribution for initial values (Defaults to Flat())
+        distribution for initial values. The first p elements of the timeseries
+        are assumed to come from the init distribution and have no AR
+        operations applied to them (Defaults to Flat())
     """
 
     def __init__(self, rho, sigma=None, tau=None,
@@ -121,6 +188,8 @@ class AR(distribution.Continuous):
             self.p = p
 
         self.constant = constant
+        if not self.constant and self.p == 1 and isinstance(rho, list):
+            rho = rho[0]
         self.rho = rho = tt.as_tensor_variable(rho)
         self.init = init
 
@@ -139,6 +208,123 @@ class AR(distribution.Continuous):
         init_like = self.init.logp(value[:self.p])
 
         return tt.sum(innov_like) + tt.sum(init_like)
+
+    def _random(self, *args, sigma=None,
+                sample_size=None, size=None):
+        if self.constant:
+            arg_break = self.p + 1
+        else:
+            arg_break = self.p
+        rho = args[:arg_break]
+        init = np.moveaxis(np.array(args[arg_break:]), 0, -1)
+        if isinstance(sample_size, np.ndarray):
+            sample_size = sample_size.ravel()[0]
+        if size is not None:
+            self_shape = to_tuple(size)
+        else:
+            self_shape = to_tuple(self.shape)
+        temp = broadcast_distribution_samples(
+            (np.empty(self_shape),) + rho + (sigma,),
+            size=sample_size
+        )
+        sigma = temp[-1]
+        rho = np.array(temp[1:-1])
+        if self.constant:
+            rho0 = rho[0]
+            rho = rho[1:]
+        else:
+            rho0 = np.zeros_like(rho[0])
+        rvs_size = sigma.shape[:-1] + (sigma.shape[-1] - self.p,)
+        epsilon = stats.norm.rvs(loc=0, scale=sigma[..., :-self.p],
+                                 size=rvs_size)
+        samples = np.zeros(sigma.shape, dtype=self.dtype)
+        samples[..., :self.p] = init
+        samples[..., self.p:] = epsilon + rho0[..., :-self.p]
+        for t_ind in range(self.p, samples.shape[-1]):
+            for p_ind in range(self.p):
+                samples[..., t_ind] += (rho[p_ind, ..., t_ind - (p_ind + 1)] *
+                                        samples[..., t_ind - (p_ind + 1)])
+        return samples
+
+    def _get_rho_from_sample(self, rho, size=None):
+        size = to_tuple(size)
+        rho = np.atleast_1d(rho)
+        p = self.p
+        if self.constant:
+            p += 1
+        if p == 1:
+            if rho.shape == size:
+                rho = rho[..., np.newaxis]
+                p_axis = rho.ndim - 1
+            elif rho.shape[:len(size)] == size:
+                if rho.ndim < len(size) or rho[len(size)] != 1:
+                    rho = rho[tuple([slice(None)] * len(size), np.newaxis)]
+                    p_axis = len(size)
+                else:
+                    p_axis = len(size)
+            elif rho.shape[0] != 1:
+                rho = rho[np.newaxis, :]
+                p_axis = 0
+            else:
+                p_axis = 0
+        elif rho.shape[:len(size)] == size:
+            p_axis = list(rho.shape[len(size):]).index(p) + len(size)
+        else:
+            p_axis = list(rho.shape).index(p)
+        return np.moveaxis(rho, p_axis, 0)
+
+    def _get_init_from_sample(self, init, size=None):
+        size = to_tuple(size)
+        init = np.asarray(init)
+        if init.shape == size:
+            init = init[..., np.newaxis]
+        elif init.shape[-1] not in [self.p, 1]:
+            init = init[..., np.newaxis]
+        return np.moveaxis(init, -1, 0)
+
+    def random(self, point=None, size=None):
+        """
+        Draw random values from AR distribution.
+
+        Parameters
+        ----------
+        point : dict, optional
+            Dict of variable values on which random values are to be
+            conditioned (uses default point if not specified).
+        size : int, optional
+            Desired size of random sample (returns one sample if not
+            specified).
+
+        Returns
+        -------
+        array
+        """
+        with _DrawValuesContext():
+            rho, sigma = draw_values([self.rho, self.sigma], point=point,
+                                     size=size)
+            init = self.init.random(point=point, size=size)
+        size = to_tuple(size)
+        rho = tuple(self._get_rho_from_sample(rho, size=size))
+        init = tuple(self._get_init_from_sample(init, size=size))
+        parameters = broadcast_distribution_samples(
+            rho + init + (sigma,), size=size
+        )
+        sigma = parameters[-1]
+        init = tuple(parameters[len(rho):(len(rho) + len(init))])
+        rho = tuple(parameters[:len(rho)])
+        if size is not None:
+            self_shape = to_tuple(size) + to_tuple(self.shape)
+        else:
+            self_shape = self.shape
+        broadcast_shape = broadcast_distribution_samples((np.empty(self_shape),
+                                                          sigma),
+                                                         size=size)[0].shape
+        return generate_samples(self._random, *(rho + init),
+                                sigma=sigma,
+                                sample_size=size,
+                                dist_shape=self.shape,
+                                broadcast_shape=broadcast_shape,
+                                size=size)
 
 
 class GaussianRandomWalk(distribution.Continuous):
