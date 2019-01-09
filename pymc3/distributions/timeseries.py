@@ -101,7 +101,7 @@ class AR1(distribution.Continuous):
         if size is not None:
             self_shape = to_tuple(size) + to_tuple(self.shape)
         else:
-            self_shape = self.shape
+            self_shape = to_tuple(self.shape)
         broadcast_shape = broadcast_distribution_samples((np.empty(self_shape),
                                                           k),
                                                          size=size)[0].shape
@@ -316,7 +316,7 @@ class AR(distribution.Continuous):
         if size is not None:
             self_shape = to_tuple(size) + to_tuple(self.shape)
         else:
-            self_shape = self.shape
+            self_shape = to_tuple(self.shape)
         broadcast_shape = broadcast_distribution_samples((np.empty(self_shape),
                                                           sigma),
                                                          size=size)[0].shape
@@ -367,6 +367,68 @@ class GaussianRandomWalk(distribution.Continuous):
 
         innov_like = Normal.dist(mu=x_im1 + mu, sigma=sigma).logp(x_i)
         return init.logp(x[0]) + tt.sum(innov_like)
+
+    def _random(self, mu, sigma, init,
+                sample_size=None, size=None):
+        if isinstance(sample_size, np.ndarray):
+            sample_size = sample_size.ravel()[0]
+        if size is not None:
+            self_shape = to_tuple(size)
+        else:
+            self_shape = to_tuple(self.shape)
+        _, mu, sigma = broadcast_distribution_samples(
+            (np.empty(self_shape[:-1] + (self_shape[-1] - 1,)),) + (mu, sigma),
+            size=sample_size
+        )
+        rvs_size = mu.shape
+        epsilon = stats.norm.rvs(loc=mu, scale=sigma,
+                                 size=rvs_size)
+        samples = np.zeros(rvs_size[:-1] + (rvs_size[-1] + 1,),
+                           dtype=self.dtype)
+        samples[..., 0] = init
+        samples[..., 1:] = epsilon
+        return np.cumsum(samples, axis=-1)
+
+    def random(self, point=None, size=None):
+        """
+        Draw random values from AR distribution.
+
+        Parameters
+        ----------
+        point : dict, optional
+            Dict of variable values on which random values are to be
+            conditioned (uses default point if not specified).
+        size : int, optional
+            Desired size of random sample (returns one sample if not
+            specified).
+
+        Returns
+        -------
+        array
+        """
+        with _DrawValuesContext():
+            mu, sigma = draw_values([self.mu, self.sigma], point=point,
+                                    size=size)
+            init = self.init.random(point=point, size=size)
+        size = to_tuple(size)
+        mu, sigma, init = broadcast_distribution_samples(
+            (mu, sigma, init), size=size
+        )
+        if size is not None:
+            self_shape = to_tuple(size) + to_tuple(self.shape)
+        else:
+            self_shape = to_tuple(self.shape)
+        broadcast_shape = broadcast_distribution_samples((np.empty(self_shape),
+                                                          mu, sigma, init),
+                                                         size=size)[0].shape
+        return generate_samples(self._random,
+                                mu=mu,
+                                sigma=sigma,
+                                init=init,
+                                sample_size=size,
+                                dist_shape=self.shape,
+                                broadcast_shape=broadcast_shape,
+                                size=size)
 
     def _repr_latex_(self, name=None, dist=None):
         if dist is None:
