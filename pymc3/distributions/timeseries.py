@@ -2,6 +2,7 @@ import theano.tensor as tt
 from theano import scan
 
 from pymc3.util import get_variable_name
+from ..theanof import floatX
 from .continuous import get_tau_sigma, Normal, Flat
 from . import multivariate
 from . import distribution
@@ -406,10 +407,10 @@ class GARCH11(distribution.Continuous):
                  initial_vol, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-        self.omega = omega = tt.as_tensor_variable(omega)
-        self.alpha_1 = alpha_1 = tt.as_tensor_variable(alpha_1)
-        self.beta_1 = beta_1 = tt.as_tensor_variable(beta_1)
-        self.initial_vol = tt.as_tensor_variable(initial_vol)
+        self.omega = omega = floatX(tt.as_tensor_variable(omega))
+        self.alpha_1 = alpha_1 = floatX(tt.as_tensor_variable(alpha_1))
+        self.beta_1 = beta_1 = floatX(tt.as_tensor_variable(beta_1))
+        self.initial_vol = floatX(tt.as_tensor_variable(initial_vol))
         self.mean = tt.as_tensor_variable(0.)
 
     def get_volatility(self, x):
@@ -441,6 +442,73 @@ class GARCH11(distribution.Continuous):
             get_variable_name(omega),
             get_variable_name(alpha_1),
             get_variable_name(beta_1))
+
+    def _random(self, omega, alpha_1, beta_1, initial_vol,
+                sample_size=None, size=None):
+        if isinstance(sample_size, np.ndarray):
+            sample_size = sample_size.ravel()[0]
+        if size is not None:
+            self_shape = to_tuple(size)
+        else:
+            self_shape = to_tuple(self.shape)
+        _, omega, alpha_1, beta_1 = broadcast_distribution_samples(
+            (np.empty(self_shape),) + (omega, alpha_1, beta_1),
+            size=sample_size
+        )
+        rvs_size = omega.shape
+        z = stats.norm.rvs(loc=0, scale=1, size=rvs_size)
+        samples = np.zeros(rvs_size, dtype=self.dtype)
+        vol2 = initial_vol**2
+        samples[..., 0] = z[..., 0] * initial_vol
+        for t_ind in range(1, samples.shape[-1]):
+            vol2 = (omega[..., t_ind] +
+                    alpha_1[..., t_ind] * samples[..., t_ind - 1]**2 +
+                    beta_1[..., t_ind] * vol2)
+            samples[..., t_ind] = np.sqrt(vol2) * z[..., t_ind]
+        return samples
+
+    def random(self, point=None, size=None):
+        """
+        Draw random values from GARCH distribution.
+
+        Parameters
+        ----------
+        point : dict, optional
+            Dict of variable values on which random values are to be
+            conditioned (uses default point if not specified).
+        size : int, optional
+            Desired size of random sample (returns one sample if not
+            specified).
+
+        Returns
+        -------
+        array
+        """
+        omega, alpha_1, beta_1, initial_vol = (
+            broadcast_distribution_samples(draw_values([self.omega,
+                                                        self.alpha_1,
+                                                        self.beta_1,
+                                                        self.initial_vol],
+                                                       point=point,
+                                                       size=size),
+                                           size=size)
+        )
+        if size is not None:
+            self_shape = to_tuple(size) + to_tuple(self.shape)
+        else:
+            self_shape = self.shape
+        broadcast_shape = broadcast_distribution_samples((np.empty(self_shape),
+                                                          omega),
+                                                         size=size)[0].shape
+        return generate_samples(self._random,
+                                omega=omega,
+                                alpha_1=alpha_1,
+                                beta_1=beta_1,
+                                initial_vol=initial_vol,
+                                sample_size=size,
+                                dist_shape=self.shape,
+                                broadcast_shape=broadcast_shape,
+                                size=size)
 
 
 class EulerMaruyama(distribution.Continuous):
