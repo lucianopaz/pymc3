@@ -8,6 +8,7 @@ from . import multivariate
 from . import distribution
 from .distribution import (
     _DrawValuesContext,
+    is_fast_drawable,
     draw_values,
     to_tuple,
     generate_samples,
@@ -352,7 +353,7 @@ class GaussianRandomWalk(distribution.Continuous):
         tau, sigma = get_tau_sigma(tau=tau, sigma=sigma)
         self.tau = tau = tt.as_tensor_variable(tau)
         self.sigma = self.sd = sigma = tt.as_tensor_variable(sigma)
-        self.mu = mu = tt.as_tensor_variable(mu)
+        self.mu = mu = floatX(tt.as_tensor_variable(mu))
         self.init = init
         self.mean = tt.as_tensor_variable(0.)
 
@@ -377,7 +378,7 @@ class GaussianRandomWalk(distribution.Continuous):
         else:
             self_shape = to_tuple(self.shape)
         _, mu, sigma = broadcast_distribution_samples(
-            (np.empty(self_shape[:-1] + (self_shape[-1] - 1,)),) + (mu, sigma),
+            (np.empty(self_shape[:-1] + (self_shape[-1] - 1,)), mu, sigma),
             size=sample_size
         )
         rvs_size = mu.shape
@@ -514,7 +515,7 @@ class GARCH11(distribution.Continuous):
         else:
             self_shape = to_tuple(self.shape)
         _, omega, alpha_1, beta_1 = broadcast_distribution_samples(
-            (np.empty(self_shape),) + (omega, alpha_1, beta_1),
+            (np.empty(self_shape), omega, alpha_1, beta_1),
             size=sample_size
         )
         rvs_size = omega.shape
@@ -585,19 +586,24 @@ class EulerMaruyama(distribution.Continuous):
         function returning the drift and diffusion coefficients of SDE
     sde_pars : tuple
         parameters of the SDE, passed as *args to sde_fn
+    init : distribution
+        distribution for initial value (Defaults to Flat())
     """
-    def __init__(self, dt, sde_fn, sde_pars, *args, **kwds):
+    def __init__(self, dt, sde_fn, sde_pars, init=Flat.dist(), *args, **kwds):
         super().__init__(*args, **kwds)
-        self.dt = dt = tt.as_tensor_variable(dt)
+        self.dt = dt = floatX(tt.as_tensor_variable(dt))
         self.sde_fn = sde_fn
         self.sde_pars = sde_pars
+        self.init = init
 
     def logp(self, x):
+        init = self.init
         xt = x[:-1]
         f, g = self.sde_fn(x[:-1], *self.sde_pars)
         mu = xt + self.dt * f
         sd = tt.sqrt(self.dt) * g
-        return tt.sum(Normal.dist(mu=mu, sigma=sd).logp(x[1:]))
+        innov_like = Normal.dist(mu=mu, sigma=sd).logp(x[1:])
+        return init.logp(x[0]) + tt.sum(innov_like)
 
     def _repr_latex_(self, name=None, dist=None):
         if dist is None:
@@ -606,6 +612,99 @@ class EulerMaruyama(distribution.Continuous):
         name = r'\text{%s}' % name
         return r'${} \sim \text{EulerMaruyama}(\mathit{{dt}}={})$'.format(name,
                                                 get_variable_name(dt))
+
+    def _random(self, *args, dt, init,
+                sample_size=None, size=None):
+        if isinstance(sample_size, np.ndarray):
+            sample_size = sample_size.ravel()[0]
+        if size is not None:
+            self_shape = to_tuple(size)
+        else:
+            self_shape = to_tuple(self.shape)
+        _, dt = broadcast_distribution_samples(
+            (np.empty(self_shape), dt),
+            size=sample_size
+        )
+        init = np.broadcast_to(init, dt.shape[:-1])
+        rvs_size = dt.shape[:-1] + (dt.shape[-1] - 1,)
+        W = stats.norm.rvs(loc=0, scale=1, size=rvs_size)
+        samples = np.zeros(dt.shape, dtype=self.dtype)
+        samples[..., 0] = init
+        sqdt = np.sqrt(dt)
+        for t_ind in range(self.p, samples.shape[-1]):
+            sde_mu, sde_sigma = self._draw_sde_values(samples[..., t_ind])
+            samples[..., t_ind] = (samples[..., t_ind - 1] +
+                                   dt[t_ind] * sde_mu +
+                                   sqdt[t_ind] * sde_sigma * W[t_ind - 1]
+                                   )
+        return samples
+
+    def _draw_sde_values(self, x, *args):
+        cache = getattr(self, '_sde_cache', None)
+        must_cache_mu = False
+        must_cache_sigma = False
+        if cache is None:
+            sde_mu, sde_sigma = self.sde_fn(x, *self.sde_pars)
+            if is_fast_drawable(sde_mu):
+                must_cache_mu = True
+                sde_mu_val = draw_values([sde_mu])
+        
+        must_cache = must_cache_mu or must_cache_sigma
+        if must_cache:
+            cache = {}
+            if must_cache_mu:
+                cache['mu'] = sde_mu_val
+            if must_cache_sigma:
+                cache['sigma'] = sde_sigma_val
+            self._sde_cache = cache
+
+    def _clear_cache(self):
+        self._sde_cache = None
+
+    def random(self, point=None, size=None):
+        """
+        Draw random values from AR distribution.
+
+        Parameters
+        ----------
+        point : dict, optional
+            Dict of variable values on which random values are to be
+            conditioned (uses default point if not specified).
+        size : int, optional
+            Desired size of random sample (returns one sample if not
+            specified).
+
+        Returns
+        -------
+        array
+        """
+        with _DrawValuesContext():
+            dt = draw_values([self.dt], point=point, size=size)
+            init = self.init.random(point=point, size=size)
+        size = to_tuple(size)
+        test_mu, test_sigma = self._draw_sde_values(init)
+        parameters = broadcast_distribution_samples(
+            rho + init + (sigma,), size=size
+        )
+        sigma = parameters[-1]
+        init = tuple(parameters[len(rho):(len(rho) + len(init))])
+        rho = tuple(parameters[:len(rho)])
+        if size is not None:
+            self_shape = to_tuple(size) + to_tuple(self.shape)
+        else:
+            self_shape = to_tuple(self.shape)
+        broadcast_shape = broadcast_distribution_samples((np.empty(self_shape),
+                                                          sigma),
+                                                         size=size)[0].shape
+        try:
+            return generate_samples(self._random, *(rho + init),
+                                    sigma=sigma,
+                                    sample_size=size,
+                                    dist_shape=self.shape,
+                                    broadcast_shape=broadcast_shape,
+                                    size=size)
+        finally:
+            self._clear_cache()
 
 
 
