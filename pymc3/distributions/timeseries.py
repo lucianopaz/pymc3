@@ -1,5 +1,6 @@
 import theano.tensor as tt
 from theano import scan
+import numbers
 
 from pymc3.util import get_variable_name
 from ..theanof import floatX
@@ -8,9 +9,9 @@ from . import multivariate
 from . import distribution
 from .distribution import (
     _DrawValuesContext,
-    is_fast_drawable,
     draw_values,
     to_tuple,
+    _compile_theano_function,
     generate_samples,
     broadcast_distribution_samples,
 )
@@ -358,7 +359,6 @@ class GaussianRandomWalk(distribution.Continuous):
         self.mean = tt.as_tensor_variable(0.)
 
     def logp(self, x):
-        tau = self.tau
         sigma = self.sigma
         mu = self.mu
         init = self.init
@@ -589,12 +589,14 @@ class EulerMaruyama(distribution.Continuous):
     init : distribution
         distribution for initial value (Defaults to Flat())
     """
+
     def __init__(self, dt, sde_fn, sde_pars, init=Flat.dist(), *args, **kwds):
         super().__init__(*args, **kwds)
         self.dt = dt = floatX(tt.as_tensor_variable(dt))
         self.sde_fn = sde_fn
         self.sde_pars = sde_pars
         self.init = init
+        self.mean = tt.as_tensor_variable(0.)
 
     def logp(self, x):
         init = self.init
@@ -631,35 +633,66 @@ class EulerMaruyama(distribution.Continuous):
         samples = np.zeros(dt.shape, dtype=self.dtype)
         samples[..., 0] = init
         sqdt = np.sqrt(dt)
-        for t_ind in range(self.p, samples.shape[-1]):
+        for t_ind in range(1, samples.shape[-1]):
             sde_mu, sde_sigma = self._draw_sde_values(samples[..., t_ind])
             samples[..., t_ind] = (samples[..., t_ind - 1] +
-                                   dt[t_ind] * sde_mu +
-                                   sqdt[t_ind] * sde_sigma * W[t_ind - 1]
+                                   dt[..., t_ind] * sde_mu +
+                                   sqdt[..., t_ind] * sde_sigma * W[...,
+                                                                    t_ind - 1]
                                    )
         return samples
 
     def _draw_sde_values(self, x, *args):
-        cache = getattr(self, '_sde_cache', None)
-        must_cache_mu = False
-        must_cache_sigma = False
-        if cache is None:
-            sde_mu, sde_sigma = self.sde_fn(x, *self.sde_pars)
-            if is_fast_drawable(sde_mu):
-                must_cache_mu = True
-                sde_mu_val = draw_values([sde_mu])
-        
-        must_cache = must_cache_mu or must_cache_sigma
-        if must_cache:
-            cache = {}
-            if must_cache_mu:
-                cache['mu'] = sde_mu_val
-            if must_cache_sigma:
-                cache['sigma'] = sde_sigma_val
-            self._sde_cache = cache
+        sde_mu_type, sde_sigma_type = getattr(self, '_sde_fun_types',
+                                              (None, None))
+        must_cache_types = False
+        sde_mu, sde_sigma = self.sde_fn(x, *self.sde_pars)
+        if sde_mu_type is None:
+            sde_mu_type = self._infer_return_type(sde_mu)
+            must_cache_types = True
+        if sde_sigma_type is None:
+            sde_sigma_type = self._infer_return_type(sde_sigma)
+            must_cache_types = True
+        if must_cache_types:
+            self._sde_fun_types = (sde_mu_type, sde_sigma_type)
+        sde_mu_value = self._get_sde_value(sde_mu, sde_mu_type)
+        sde_sigma_value = self._get_sde_value(sde_sigma, sde_sigma_type)
+        return sde_mu_value, sde_sigma_value
 
-    def _clear_cache(self):
-        self._sde_cache = None
+    def _infer_return_type(self, var):
+        if isinstance(var, (numbers.Number, np.ndarray)):
+            return 0
+        elif isinstance(var, tt.Constant):
+            return 1
+        elif isinstance(var, tt.sharedvar.SharedVariable):
+            return 2
+        elif isinstance(var, distribution.Distribution):
+            return 3
+        elif isinstance(getattr(var, 'distribution', None),
+                        distribution.Distribution):
+            return 4
+        elif isinstance(var, tt.TensorVariable):
+            return 5
+        else:
+            raise TypeError('Supplied sde_fn returns elements of an unhandled'
+                            'type: {}'.format(type(var)))
+
+    def _get_sde_value(self, var, typ):
+        if typ == 0:  # numbers and arrays
+            return np.atleast_1d(var)
+        elif typ == 1:  # TensorConstants
+            return np.atleast_1d(var.value)
+        elif typ == 2:  # SharedVariables
+            return np.atleast_1d(var.get_value())
+        else:
+            with _DrawValuesContext():
+                if typ == 3:  # Distributions
+                    return var.random(point=self._point)
+                elif typ == 4:  # Random Variables
+                    return var.distribution.random(point=self._point)
+                else:  # TensorVariables
+                    func = _compile_theano_function(var, [])
+                    return func([])
 
     def random(self, point=None, size=None):
         """
@@ -678,34 +711,32 @@ class EulerMaruyama(distribution.Continuous):
         -------
         array
         """
-        with _DrawValuesContext():
-            dt = draw_values([self.dt], point=point, size=size)
-            init = self.init.random(point=point, size=size)
-        size = to_tuple(size)
-        test_mu, test_sigma = self._draw_sde_values(init)
-        parameters = broadcast_distribution_samples(
-            rho + init + (sigma,), size=size
-        )
-        sigma = parameters[-1]
-        init = tuple(parameters[len(rho):(len(rho) + len(init))])
-        rho = tuple(parameters[:len(rho)])
-        if size is not None:
-            self_shape = to_tuple(size) + to_tuple(self.shape)
-        else:
-            self_shape = to_tuple(self.shape)
-        broadcast_shape = broadcast_distribution_samples((np.empty(self_shape),
-                                                          sigma),
-                                                         size=size)[0].shape
+        self._point = point
         try:
-            return generate_samples(self._random, *(rho + init),
-                                    sigma=sigma,
+            with _DrawValuesContext():
+                dt = draw_values([self.dt], point=point, size=size)
+                init = self.init.random(point=point, size=size)
+            size = to_tuple(size)
+            test_mu, test_sigma = self._draw_sde_values(init)
+            parameters = broadcast_distribution_samples(
+                (dt, init, test_mu, test_sigma), size=size
+            )
+            dt, init = parameters[:2]
+            if size is not None:
+                self_shape = to_tuple(size) + to_tuple(self.shape)
+            else:
+                self_shape = to_tuple(self.shape)
+            broadcast_shape = broadcast_distribution_samples(
+                (np.empty(self_shape), dt), size=size)[0].shape
+            return generate_samples(self._random,
+                                    dt=dt,
+                                    init=init,
                                     sample_size=size,
                                     dist_shape=self.shape,
                                     broadcast_shape=broadcast_shape,
                                     size=size)
         finally:
-            self._clear_cache()
-
+            self._point = None
 
 
 class MvGaussianRandomWalk(distribution.Continuous):
