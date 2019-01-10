@@ -634,7 +634,7 @@ class EulerMaruyama(distribution.Continuous):
         samples[..., 0] = init
         sqdt = np.sqrt(dt)
         for t_ind in range(1, samples.shape[-1]):
-            sde_mu, sde_sigma = self._draw_sde_values(samples[..., t_ind])
+            sde_mu, sde_sigma = self._draw_sde_values(samples[..., t_ind - 1])
             samples[..., t_ind] = (samples[..., t_ind - 1] +
                                    dt[..., t_ind] * sde_mu +
                                    sqdt[..., t_ind] * sde_sigma * W[...,
