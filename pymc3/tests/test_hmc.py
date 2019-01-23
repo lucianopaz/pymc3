@@ -17,6 +17,7 @@ def test_leapfrog_reversible():
     size = model.ndim
     scaling = floatX(np.random.rand(size))
     step = BaseHMC(vars=model.vars, model=model, scaling=scaling)
+    step._init_fs()
     step.integrator._logp_dlogp_func.set_extra_values({})
     p = floatX(step.potential.random())
     q = floatX(np.random.randn(size))

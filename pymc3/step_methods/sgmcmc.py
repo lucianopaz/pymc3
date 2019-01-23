@@ -166,8 +166,11 @@ class BaseStochasticGradient(ArrayStepShared):
             self.inarray += self.minibatch_tensors
             self.updates.update(updates)
 
-        self._initialize_values()
         super().__init__(vars, shared)
+
+    def _init_fs(self):
+        self._initialize_values()
+        self._must_init_fs = False
 
     def _initialize_values(self):
         """Initializes the parameters for the stochastic gradient minibatch

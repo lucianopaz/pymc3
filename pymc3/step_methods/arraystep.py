@@ -121,14 +121,20 @@ class ArrayStep(BlockedStep):
     blocked: Boolean (default True)
     """
 
-    def __init__(self, vars, fs, allvars=False, blocked=True):
+    def __init__(self, vars, fs=None, allvars=False, blocked=True):
         self.vars = vars
         self.ordering = ArrayOrdering(vars)
+        if fs is None:
+            self._must_init_fs = True
+        else:
+            self._must_init_fs = False
         self.fs = fs
         self.allvars = allvars
         self.blocked = blocked
 
     def step(self, point):
+        if self._must_init_fs:
+            self._init_fs()
         bij = DictToArrayBijection(self.ordering, point)
 
         inputs = [bij.mapf(x) for x in self.fs]
@@ -141,6 +147,10 @@ class ArrayStep(BlockedStep):
         else:
             apoint = self.astep(bij.map(point), *inputs)
             return bij.rmap(apoint)
+
+    def _init_fs(self):
+        """Isolates the theano.function call to get the callable fs"""
+        raise NotImplementedError('Abstract Base method _init_fs')
 
 
 class ArrayStepShared(BlockedStep):
@@ -164,8 +174,11 @@ class ArrayStepShared(BlockedStep):
         self.shared = {str(var): shared for var, shared in shared.items()}
         self.blocked = blocked
         self.bij = None
+        self._must_init_fs = True
 
     def step(self, point):
+        if self._must_init_fs:
+            self._init_fs()
         for var, share in self.shared.items():
             share.set_value(point[var])
 
@@ -177,6 +190,10 @@ class ArrayStepShared(BlockedStep):
         else:
             apoint = self.astep(self.bij.map(point))
             return self.bij.rmap(apoint)
+
+    def _init_fs(self):
+        """Isolates the theano.function call to get the callable fs"""
+        raise NotImplementedError('Abstract Base method _init_fs')
 
 
 class PopulationArrayStepShared(ArrayStepShared):
@@ -220,12 +237,18 @@ class PopulationArrayStepShared(ArrayStepShared):
 class GradientSharedStep(BlockedStep):
     def __init__(self, vars, model=None, blocked=True,
                  dtype=None, **theano_kwargs):
-        model = modelcontext(model)
+        self._model = modelcontext(model)
         self.vars = vars
         self.blocked = blocked
+        self._must_init_fs = True
+        self._dtype = dtype
+        self._theano_kwargs = theano_kwargs
+
+    def _init_fs(self):
+        model = self._model
 
         func = model.logp_dlogp_function(
-            vars, dtype=dtype, **theano_kwargs)
+            self.vars, dtype=self._dtype, **self._theano_kwargs)
 
         # handle edge case discovered in #2948
         try:
@@ -233,13 +256,18 @@ class GradientSharedStep(BlockedStep):
             q = func.dict_to_array(model.test_point)
             logp, dlogp = func(q)
         except ValueError:
-            theano_kwargs.update(mode='FAST_COMPILE')
+            self._theano_kwargs.update(mode='FAST_COMPILE')
             func = model.logp_dlogp_function(
-                vars, dtype=dtype, **theano_kwargs)
+                self.vars, dtype=self._dtype, **self._theano_kwargs)
 
         self._logp_dlogp_func = func
+        self._must_init_fs = False
+        # After initing fs we no longer need to keep storing the following attributes
+        del (self._dtype, self._theano_kwargs)
 
     def step(self, point):
+        if self._must_init_fs:
+            self._init_fs()
         self._logp_dlogp_func.set_extra_values(point)
         array = self._logp_dlogp_func.dict_to_array(point)
 

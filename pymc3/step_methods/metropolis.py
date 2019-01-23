@@ -104,7 +104,7 @@ class Metropolis(ArrayStepShared):
 
         if vars is None:
             vars = model.vars
-        vars = pm.inputvars(vars)
+        self._vars = vars = pm.inputvars(vars)
 
         if S is None:
             S = np.ones(sum(v.dsize for v in vars))
@@ -132,9 +132,17 @@ class Metropolis(ArrayStepShared):
 
         self.mode = mode
 
-        shared = pm.make_shared_replacements(vars, model)
-        self.delta_logp = delta_logp(model.logpt, vars, shared)
+        self._shared = shared = pm.make_shared_replacements(vars, model)
+        self._model_logpt = model.logpt
         super().__init__(vars, shared)
+
+    def _init_fs(self):
+        self.delta_logp = delta_logp(self._model_logpt,
+                                     self._vars,
+                                     self._shared)
+        # After initing fs we no longer need to keep storing the following attributes
+        del (self._model_logpt, self._vars, self._shared)
+        self._must_init_fs = False
 
     def astep(self, q0):
         if not self.steps_until_tune and self.tune:
@@ -244,7 +252,7 @@ class BinaryMetropolis(ArrayStep):
 
     def __init__(self, vars, scaling=1., tune=True, tune_interval=100, model=None):
 
-        model = pm.modelcontext(model)
+        self._model = pm.modelcontext(model)
 
         self.scaling = scaling
         self.tune = tune
@@ -256,7 +264,13 @@ class BinaryMetropolis(ArrayStep):
             raise ValueError(
                 'All variables must be Bernoulli for BinaryMetropolis')
 
-        super().__init__(vars, [model.fastlogp])
+        super().__init__(vars, fs=None)
+
+    def _init_fs(self):
+        self.fs = [self._model.fastlogp]
+        self._must_init_fs = False
+        # After initing fs we no longer need to keep storing the model attribute
+        del self._model
 
     def astep(self, q0, logp):
 
@@ -317,7 +331,7 @@ class BinaryGibbsMetropolis(ArrayStep):
 
     def __init__(self, vars, order='random', transit_p=.8, model=None):
 
-        model = pm.modelcontext(model)
+        self._model = pm.modelcontext(model)
 
         # transition probabilities
         self.transit_p = transit_p
@@ -337,7 +351,13 @@ class BinaryGibbsMetropolis(ArrayStep):
             raise ValueError(
                 'All variables must be binary for BinaryGibbsMetropolis')
 
-        super().__init__(vars, [model.fastlogp])
+        super().__init__(vars, fs=None)
+
+    def _init_fs(self):
+        self.fs = [self._model.fastlogp]
+        self._must_init_fs = False
+        # After initing fs we no longer need to keep storing the model attribute
+        del self._model
 
     def astep(self, q0, logp):
         order = self.order
@@ -386,7 +406,7 @@ class CategoricalGibbsMetropolis(ArrayStep):
 
     def __init__(self, vars, proposal='uniform', order='random', model=None):
 
-        model = pm.modelcontext(model)
+        self._model = model = pm.modelcontext(model)
         vars = pm.inputvars(vars)
 
         dimcats = []
@@ -424,7 +444,13 @@ class CategoricalGibbsMetropolis(ArrayStep):
             raise ValueError('Argument \'proposal\' should either be ' +
                     '\'uniform\' or \'proportional\'')
 
-        super().__init__(vars, [model.fastlogp])
+        super().__init__(vars, fs=None)
+
+    def _init_fs(self):
+        self.fs = [self._model.fastlogp]
+        self._must_init_fs = False
+        # After initing fs we no longer need to keep storing the model attribute
+        del self._model
 
     def astep_unif(self, q0, logp):
         dimcats = self.dimcats
@@ -540,7 +566,7 @@ class DEMetropolis(PopulationArrayStepShared):
         warnings.warn('Population based sampling methods such as DEMetropolis are experimental.' \
             ' Use carefully and be extra critical about their results!')
 
-        model = pm.modelcontext(model)
+        self._model = model = pm.modelcontext(model)
 
         if vars is None:
             vars = model.cont_vars
@@ -566,8 +592,18 @@ class DEMetropolis(PopulationArrayStepShared):
         self.mode = mode
 
         shared = pm.make_shared_replacements(vars, model)
-        self.delta_logp = delta_logp(model.logpt, vars, shared)
+        self._vars = vars
+        self._shared = shared
+        self._model_logpt = model.logpt
         super().__init__(vars, shared)
+
+    def _init_fs(self):
+        self.delta_logp = delta_logp(self._model_logpt,
+                                     self._vars,
+                                     self._shared)
+        self._must_init_fs = False
+        # After initing fs we no longer need to store the following attributes
+        del (self._model_logpt, self._vars, self._shared)
 
     def astep(self, q0):
         if not self.steps_until_tune and self.tune:

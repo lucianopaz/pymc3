@@ -69,48 +69,63 @@ class BaseHMC(arraystep.GradientSharedStep):
 
         if vars is None:
             vars = self._model.cont_vars
-        vars = inputvars(vars)
+        self._vars = inputvars(vars)
 
         super().__init__(vars, blocked=blocked, model=model, dtype=dtype, **theano_kwargs)
 
         self.adapt_step_size = adapt_step_size
         self.Emax = Emax
         self.iter_count = 0
-        size = self._logp_dlogp_func.size
-
-        self.step_size = step_scale / (size ** 0.25)
+        self.step_scale = step_scale
         self.target_accept = target_accept
-        self.step_adapt = step_sizes.DualAverageAdaptation(
-            self.step_size, target_accept, gamma, k, t0
-        )
-
+        self.gamma = gamma
+        self.k = k
+        self.t0 = t0
         self.tune = True
-
-        if scaling is None and potential is None:
-            mean = floatX(np.zeros(size))
-            var = floatX(np.ones(size))
-            potential = QuadPotentialDiagAdapt(size, mean, var, 10)
-
-        if isinstance(scaling, dict):
-            point = Point(scaling, model=model)
-            scaling = guess_scaling(point, model=model, vars=vars)
-
         if scaling is not None and potential is not None:
             raise ValueError("Can not specify both potential and scaling.")
-
-        if potential is not None:
-            self.potential = potential
-        else:
-            self.potential = quad_potential(scaling, is_cov)
-
-        self.integrator = integration.CpuLeapfrogIntegrator(
-            self.potential, self._logp_dlogp_func
-        )
-
+        self._scaling = scaling
+        self._potential = potential
+        self.is_cov = is_cov
         self._step_rand = step_rand
         self._warnings = []
         self._samples_after_tune = 0
         self._num_divs_sample = 0
+
+    def _init_fs(self):
+        # This initializes _logp_dlogp_func, which is needed by the integrator
+        super()._init_fs()
+        # We can only set _must_init_fs to False if the full _init_fs succeeds
+        # without exceptions
+        self._must_init_fs = True
+
+        size = self._logp_dlogp_func.size
+        self.step_size = self.step_scale / (size ** 0.25)
+        self.step_adapt = step_sizes.DualAverageAdaptation(
+            self.step_size, self.target_accept, self.gamma, self.k, self.t0
+        )
+
+        if self._scaling is None and self._potential is None:
+            mean = floatX(np.zeros(size))
+            var = floatX(np.ones(size))
+            self._potential = QuadPotentialDiagAdapt(size, mean, var, 10)
+
+        if isinstance(self._scaling, dict):
+            point = Point(self._scaling, model=self._model)
+            self._scaling = guess_scaling(point, model=self._model, vars=self._vars)
+
+        if self._potential is not None:
+            self.potential = self._potential
+        else:
+            self.potential = quad_potential(self._scaling, self.is_cov)
+
+        self.integrator = integration.CpuLeapfrogIntegrator(
+            self.potential, self._logp_dlogp_func
+        )
+        self._must_init_fs = False
+        # After initing fs we no longer need to store the following attributes
+        del (self._vars, self.step_scale, self.gamma, self.k, self.t0,
+             self._scaling, self._potential, self.is_cov)
 
     def _hamiltonian_step(self, start, p0, step_size):
         """Compute one hamiltonian trajectory and return the next state.

@@ -280,6 +280,7 @@ class TestValueGradFunction(unittest.TestCase):
                          shape=ndim)  # variance for the correlation matrix
             pm.HalfCauchy('nu', beta=10)
             step = pm.NUTS()
+            step._init_fs()
 
         func = step._logp_dlogp_func
         func.set_extra_values(m.test_point)

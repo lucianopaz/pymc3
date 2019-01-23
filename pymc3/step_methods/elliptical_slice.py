@@ -79,7 +79,11 @@ class EllipticalSlice(ArrayStep):
             vars = self.model.cont_vars
         vars = inputvars(vars)
 
-        super().__init__(vars, [self.model.fastlogp], **kwargs)
+        super().__init__(vars, fs=None, **kwargs)
+
+    def _init_fs(self):
+        self.fs = [self.model.fastlogp]
+        self._must_init_fs = False
 
     def astep(self, q0, logp):
         """q0 : current state
