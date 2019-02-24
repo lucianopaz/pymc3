@@ -61,8 +61,6 @@ class AR1(distribution.Continuous):
         return boundary(x[0]) + tt.sum(innov_like)
 
     def _random(self, k, tau_e, sample_size=None, size=None):
-        if isinstance(sample_size, np.ndarray):
-            sample_size = sample_size.ravel()[0]
         if size is not None:
             self_shape = to_tuple(size)
         else:
@@ -108,7 +106,7 @@ class AR1(distribution.Continuous):
                                                           k),
                                                          size=size)[0].shape
         return generate_samples(self._random, k=k, tau_e=tau_e,
-                                sample_size=size,
+                                not_broadcast_kwargs={'sample_size': size},
                                 dist_shape=self.shape,
                                 broadcast_shape=broadcast_shape,
                                 size=size)
@@ -220,8 +218,6 @@ class AR(distribution.Continuous):
             arg_break = self.p
         rho = args[:arg_break]
         init = np.moveaxis(np.array(args[arg_break:]), 0, -1)
-        if isinstance(sample_size, np.ndarray):
-            sample_size = sample_size.ravel()[0]
         if size is not None:
             self_shape = to_tuple(size)
         else:
@@ -324,7 +320,7 @@ class AR(distribution.Continuous):
                                                          size=size)[0].shape
         return generate_samples(self._random, *(rho + init),
                                 sigma=sigma,
-                                sample_size=size,
+                                not_broadcast_kwargs={'sample_size': size},
                                 dist_shape=self.shape,
                                 broadcast_shape=broadcast_shape,
                                 size=size)
@@ -371,8 +367,6 @@ class GaussianRandomWalk(distribution.Continuous):
 
     def _random(self, mu, sigma, init,
                 sample_size=None, size=None):
-        if isinstance(sample_size, np.ndarray):
-            sample_size = sample_size.ravel()[0]
         if size is not None:
             self_shape = to_tuple(size)
         else:
@@ -426,7 +420,7 @@ class GaussianRandomWalk(distribution.Continuous):
                                 mu=mu,
                                 sigma=sigma,
                                 init=init,
-                                sample_size=size,
+                                not_broadcast_kwargs={'sample_size': size},
                                 dist_shape=self.shape,
                                 broadcast_shape=broadcast_shape,
                                 size=size)
@@ -508,8 +502,6 @@ class GARCH11(distribution.Continuous):
 
     def _random(self, omega, alpha_1, beta_1, initial_vol,
                 sample_size=None, size=None):
-        if isinstance(sample_size, np.ndarray):
-            sample_size = sample_size.ravel()[0]
         if size is not None:
             self_shape = to_tuple(size)
         else:
@@ -568,7 +560,7 @@ class GARCH11(distribution.Continuous):
                                 alpha_1=alpha_1,
                                 beta_1=beta_1,
                                 initial_vol=initial_vol,
-                                sample_size=size,
+                                not_broadcast_kwargs={'sample_size': size},
                                 dist_shape=self.shape,
                                 broadcast_shape=broadcast_shape,
                                 size=size)
@@ -617,8 +609,6 @@ class EulerMaruyama(distribution.Continuous):
 
     def _random(self, *args, dt, init,
                 sample_size=None, size=None):
-        if isinstance(sample_size, np.ndarray):
-            sample_size = sample_size.ravel()[0]
         if size is not None:
             self_shape = to_tuple(size)
         else:
@@ -731,7 +721,7 @@ class EulerMaruyama(distribution.Continuous):
             return generate_samples(self._random,
                                     dt=dt,
                                     init=init,
-                                    sample_size=size,
+                                    not_broadcast_kwargs={'sample_size': size},
                                     dist_shape=self.shape,
                                     broadcast_shape=broadcast_shape,
                                     size=size)
@@ -768,6 +758,7 @@ class MvGaussianRandomWalk(distribution.Continuous):
         self.init = init
         self.innovArgs = (mu, cov, tau, chol, lower)
         self.innov = multivariate.MvNormal.dist(*self.innovArgs)
+        self.init = init
         self.mean = tt.as_tensor_variable(0.)
 
     def logp(self, x):
