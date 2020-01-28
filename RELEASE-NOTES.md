@@ -106,6 +106,9 @@ Though we had to temporarily remove the `docs/*` folder from the tarball due to 
 - Dropped the outdated 'nuts' initialization method for `pm.sample` (see [#3863](https://github.com/pymc-devs/pymc3/pull/3863)).
 
 
+### Maintenance
+- Fixed bug in `draw_values`, in which values that had been drawn in a separate `_DrawValuesContext` were not added to the `givens` dictionary and lead to `ValueError: Cannot resolve inputs for ...` exceptions. Fixes issue [#3789](https://github.com/pymc-devs/pymc3/issues/3789)
+
 ## PyMC3 3.8 (November 29 2019)
 
 ### New features
