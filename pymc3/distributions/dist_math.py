@@ -16,11 +16,11 @@
 Created on Mar 7, 2011
 
 @author: johnsalvatier
-"""
-import platform
+'''
+from typing import Union, Tuple
 import numpy as np
 import scipy.linalg
-import scipy.stats
+from scipy.stats import rv_discrete
 import theano.tensor as tt
 import theano
 from theano.scalar import UnaryScalarOp, upgrade_to_float_no_complex
@@ -333,7 +333,7 @@ i0e_scalar = I0e(upgrade_to_float_no_complex, name="i0e")
 i0e = tt.Elemwise(i0e_scalar, name="Elemwise{i0e,no_inplace}")
 
 
-def random_choice(*args, **kwargs):
+def random_choice(*args, **kwargs): # pylint: disble=unused-argument
     """Return draws from a categorial probability functions
 
     Args:
@@ -353,6 +353,11 @@ def random_choice(*args, **kwargs):
     size = kwargs.pop("size")
     k = p.shape[-1]
 
+    def random_choice(k: int, p: np.ndarray, size: Union[int, Tuple[int, ...]]=1) -> np.ndarray:
+        p = p / p.sum() # renormalize
+        dist = rv_discrete(values=(np.arange(0, k, 1), p))
+        return dist.rvs(size)
+
     if p.ndim > 1:
         # If p is an nd-array, the last axis is interpreted as the class
         # probability. We must iterate over the elements of all the other
@@ -364,11 +369,11 @@ def random_choice(*args, **kwargs):
         # np.random.choice accepts 1D p arrays, so we semiflatten p to
         # iterate calls using the last axis as the category probabilities
         p = np.reshape(p, (-1, p.shape[-1]))
-        samples = np.array([np.random.choice(k, p=p_) for p_ in p])
+        samples = np.array([random_choice(k, p=p_) for p_ in p])
         # We reshape to the desired output shape
         samples = np.reshape(samples, out_shape)
     else:
-        samples = np.random.choice(k, p=p, size=size)
+        samples = random_choice(k, p=p, size=size)
     return samples
 
 
@@ -411,7 +416,11 @@ def incomplete_beta_cfe(a, b, x, small):
     qkm1 = one
     r = one
 
-    def _step(i, pkm1, pkm2, qkm1, qkm2, k1, k2, k3, k4, k5, k6, k7, k8, r):
+    def _step(
+            _i,
+            pkm1, pkm2, qkm1, qkm2,
+            k1, k2, k3, k4, k5, k6, k7, k8, r
+    ):
         xk = -(x * k1 * k2) / (k3 * k4)
         pk = pkm1 + pkm2 * xk
         qk = qkm1 + qkm2 * xk
