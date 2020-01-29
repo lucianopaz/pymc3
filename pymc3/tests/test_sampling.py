@@ -927,8 +927,8 @@ def test_prior_sampling_mixture():
 
     def stick_breaking(beta):
         portion_remaining = tt.concatenate([[1], tt.extra_ops.cumprod(1 - beta)[:-1]])
-
-        return beta * portion_remaining
+        result = beta * portion_remaining
+        return result / tt.sum(result, axis=-1, keepdims=True)
 
     with pm.Model() as model:
         alpha = pm.Gamma('alpha', 1., 1.)
