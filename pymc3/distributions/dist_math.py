@@ -16,7 +16,7 @@
 Created on Mar 7, 2011
 
 @author: johnsalvatier
-'''
+"""
 import numpy as np
 import scipy.linalg
 import theano.tensor as tt
@@ -409,11 +409,7 @@ def incomplete_beta_cfe(a, b, x, small):
     qkm1 = one
     r = one
 
-    def _step(
-            _i,
-            pkm1, pkm2, qkm1, qkm2,
-            k1, k2, k3, k4, k5, k6, k7, k8, r
-    ):
+    def _step(_i, pkm1, pkm2, qkm1, qkm2, k1, k2, k3, k4, k5, k6, k7, k8, r):
         xk = -(x * k1 * k2) / (k3 * k4)
         pk = pkm1 + pkm2 * xk
         qk = qkm1 + qkm2 * xk

@@ -916,12 +916,15 @@ class TestSamplePriorPredictive(SeededTest):
             prior_trace = pm.sample_prior_predictive(5)
             assert prior_trace["x"].shape == (5, 3, 1)
 
+
 # Added this test because the NormalMixture distribution did not support
 # component shape identification, causing prior predictive sampling to
 # error out.
 def test_prior_sampling_mixture():
-    old_faithful_df = pd.read_csv(pm.get_data('old_faithful.csv'))
-    old_faithful_df['std_waiting'] = (old_faithful_df.waiting - old_faithful_df.waiting.mean()) / old_faithful_df.waiting.std()
+    old_faithful_df = pd.read_csv(pm.get_data("old_faithful.csv"))
+    old_faithful_df["std_waiting"] = (
+        old_faithful_df.waiting - old_faithful_df.waiting.mean()
+    ) / old_faithful_df.waiting.std()
     N = old_faithful_df.shape[0]
     K = 30
 
@@ -931,15 +934,16 @@ def test_prior_sampling_mixture():
         return result / tt.sum(result, axis=-1, keepdims=True)
 
     with pm.Model() as model:
-        alpha = pm.Gamma('alpha', 1., 1.)
-        beta = pm.Beta('beta', 1., alpha, shape=K)
-        w = pm.Deterministic('w', stick_breaking(beta))
+        alpha = pm.Gamma("alpha", 1.0, 1.0)
+        beta = pm.Beta("beta", 1.0, alpha, shape=K)
+        w = pm.Deterministic("w", stick_breaking(beta))
 
-        tau = pm.Gamma('tau', 1., 1., shape=K)
-        lambda_ = pm.Gamma('lambda_', 10., 1., shape=K)
-        mu = pm.Normal('mu', 0, tau=lambda_ * tau, shape=K)
-        obs = pm.NormalMixture('obs', w, mu, tau=lambda_ * tau,
-                               observed=old_faithful_df.std_waiting.values)
+        tau = pm.Gamma("tau", 1.0, 1.0, shape=K)
+        lambda_ = pm.Gamma("lambda_", 10.0, 1.0, shape=K)
+        mu = pm.Normal("mu", 0, tau=lambda_ * tau, shape=K)
+        obs = pm.NormalMixture(
+            "obs", w, mu, tau=lambda_ * tau, observed=old_faithful_df.std_waiting.values
+        )
 
         pm.sample_prior_predictive()
 

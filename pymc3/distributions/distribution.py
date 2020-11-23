@@ -690,8 +690,7 @@ def draw_values(params, point=None, size=None):
             if (next_, size) in drawn:
                 # If the node already has a givens value, add it to givens
                 givens[next_.name] = (next_, drawn[(next_, size)])
-            elif isinstance(next_, (theano_constant,
-                                    tt.sharedvar.SharedVariable)):
+            elif isinstance(next_, (theano_constant, tt.sharedvar.SharedVariable)):
                 # If the node is a theano.tensor.TensorConstant or a
                 # theano.tensor.sharedvar.SharedVariable, its value will be
                 # available automatically in _compile_theano_function so
@@ -730,9 +729,13 @@ def draw_values(params, point=None, size=None):
                     # The node failed, so we must add the node's parents to
                     # the stack of nodes to try to draw from. We exclude the
                     # nodes in the `params` list.
-                    stack.extend([node for node in named_nodes_parents[next_]
-                                  if node is not None and
-                                  getattr(node, "name", None) not in givens])
+                    stack.extend(
+                        [
+                            node
+                            for node in named_nodes_parents[next_]
+                            if node is not None and getattr(node, "name", None) not in givens
+                        ]
+                    )
 
         # the below makes sure the graph is evaluated in order
         # test_distributions_random::TestDrawValues::test_draw_order fails without it
@@ -754,10 +757,7 @@ def draw_values(params, point=None, size=None):
                     evaluated[param_idx] = drawn[(param, size)]
                 else:
                     try:  # might evaluate in a bad order,
-                        value = _draw_value(param,
-                                            point=point,
-                                            givens=givens.values(),
-                                            size=size)
+                        value = _draw_value(param, point=point, givens=givens.values(), size=size)
                         evaluated[param_idx] = drawn[(param, size)] = value
                         givens[param.name] = (param, value)
                     except theano.gof.fg.MissingInputError:
