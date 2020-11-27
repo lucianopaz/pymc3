@@ -17,8 +17,10 @@ Created on Mar 7, 2011
 
 @author: johnsalvatier
 """
+import platform
 import numpy as np
 import scipy.linalg
+import scipy.stats
 import theano.tensor as tt
 import theano
 from theano.scalar import UnaryScalarOp, upgrade_to_float_no_complex
