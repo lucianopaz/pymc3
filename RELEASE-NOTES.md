@@ -109,16 +109,11 @@ Though we had to temporarily remove the `docs/*` folder from the tarball due to 
 - SMC-ABC: add option to define summary statistics, allow to sample from more complex models, remove redundant distances [#3940](https://github.com/pymc-devs/pymc3/issues/3940)
 
 ### Maintenance
-- Fixed bug in `draw_values`, in which values that had been drawn in a separate `_DrawValuesContext` were not added to the `givens` dictionary and lead to `ValueError: Cannot resolve inputs for ...` exceptions. Fixes issue [#3789](https://github.com/pymc-devs/pymc3/issues/3789)
 - Remove `sample_ppc` and `sample_ppc_w` that were deprecated in 3.6.
 - Deprecated `sd` has been replaced by `sigma` (already in version 3.7) in continuous, mixed and timeseries distributions and now raises `DeprecationWarning` when `sd` is used. (see [#3837](https://github.com/pymc-devs/pymc3/pull/3837) and [#3688](https://github.com/pymc-devs/pymc3/issues/3688)).
 - We'll deprecate the `Text` and `SQLite` backends and the `save_trace`/`load_trace` functions, since this is now done with ArviZ. (see [#3902](https://github.com/pymc-devs/pymc3/pull/3902))
 - Dropped some deprecated kwargs and functions (see [#3906](https://github.com/pymc-devs/pymc3/pull/3906))
 - Dropped the outdated 'nuts' initialization method for `pm.sample` (see [#3863](https://github.com/pymc-devs/pymc3/pull/3863)).
-
-
-### Maintenance
-- Fixed bug in `draw_values`, in which values that had been drawn in a separate `_DrawValuesContext` were not added to the `givens` dictionary and lead to `ValueError: Cannot resolve inputs for ...` exceptions. Fixes issue [#3789](https://github.com/pymc-devs/pymc3/issues/3789)
 
 ## PyMC3 3.8 (November 29 2019)
 
