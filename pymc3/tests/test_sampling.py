@@ -57,7 +57,7 @@ class TestSample(SeededTest):
         random_numbers = []
         draws = []
         for _ in range(2):
-            np.random.seed(1)  # seedsa in other processes don't effect main process
+            np.random.seed(1)  # seeds in other processes don't affect main process
             with self.model:
                 trace = pm.sample(100, tune=0, cores=cores)
             # numpy thread mentioned race condition.  might as well check none are equal
